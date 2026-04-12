@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Баркод / QR Скенер</title>
+<script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#f5f5f5;color:#222;min-height:100vh;padding:1rem}
+h1{font-size:20px;font-weight:500;margin-bottom:1rem;text-align:center}
+.card{background:#fff;border:1px solid #ddd;border-radius:12px;padding:1rem;margin-bottom:1rem}
+.scan-area{position:relative;width:100%;max-width:500px;margin:0 auto;aspect-ratio:4/3;border-radius:8px;overflow:hidden;background:#000}
+video{width:100%;height:100%;object-fit:cover;display:block}
+.overlay{position:absolute;inset:0;pointer-events:none}
+.crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:60%;height:60%;border:2px solid rgba(255,255,255,0.8);border-radius:8px}
+.slot-label{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.6);color:#fff;font-size:13px;padding:4px 12px;border-radius:20px;white-space:nowrap}
+.slot-indicator{position:absolute;top:8px;right:8px;width:12px;height:12px;border-radius:50%;background:#e24b4a}
+.slot-indicator.active{background:#4caf50;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.controls{display:flex;gap:8px;margin-top:0.75rem;flex-wrap:wrap}
+button{flex:1;min-width:120px;padding:10px 16px;border:1px solid #ccc;border-radius:8px;background:#fff;color:#222;font-size:14px;cursor:pointer}
+button:hover{background:#f0f0f0}
+button:active{transform:scale(0.98)}
+button.primary{background:#1D9E75;color:#fff;border-color:#1D9E75}
+button.primary:hover{background:#0F6E56}
+button.danger{background:#e24b4a;color:#fff;border-color:#e24b4a}
+button:disabled{opacity:0.4;cursor:not-allowed}
+.slots{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0.75rem}
+.slot{padding:0.75rem;border:1px solid #ddd;border-radius:8px;background:#f9f9f9;min-height:64px}
+.slot.filled{border-color:#1D9E75;background:#fff}
+.slot-title{font-size:11px;color:#888;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em}
+.slot-value{font-size:14px;font-weight:500;word-break:break-all}
+.slot-value.empty{color:#aaa;font-weight:400;font-style:italic}
+.records-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem}
+.records-header h2{font-size:15px;font-weight:500}
+.badge{background:#e6f1fb;color:#185FA5;font-size:12px;padding:2px 10px;border-radius:20px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 10px;color:#666;border-bottom:1px solid #eee;font-weight:500}
+td{padding:8px 10px;border-bottom:1px solid #eee;word-break:break-all}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f9f9f9}
+.empty-state{text-align:center;padding:2rem;color:#aaa;font-size:14px}
+.status-bar{font-size:13px;padding:8px 12px;border-radius:8px;margin-top:0.75rem;text-align:center}
+.status-bar.info{background:#e6f1fb;color:#185FA5}
+.status-bar.success{background:#e8f5e9;color:#2e7d32}
+.status-bar.error{background:#ffebee;color:#c62828}
+.cam-select{width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#222;font-size:13px;margin-top:0.75rem;display:none}
+</style>
+</head>
+<body>
+<h1>📷 Баркод / QR Скенер</h1>
+
+<div class="card">
+  <div class="scan-area">
+    <video id="video" playsinline></video>
+    <div class="overlay">
+      <div class="crosshair"></div>
+      <div class="slot-label" id="slotLabel">Натисни Старт</div>
+      <div class="slot-indicator" id="indicator"></div>
+    </div>
+  </div>
+  <div id="statusBar" class="status-bar info" style="display:none"></div>
+  <div class="controls">
+    <button class="primary" id="startBtn" onclick="startScanner()">▶ Стартирай камера</button>
+    <button id="stopBtn" onclick="stopScanner()" disabled>■ Спри</button>
+  </div>
+  <select class="cam-select" id="camSelect" onchange="switchCamera()"></select>
+</div>
+
+<div class="card">
+  <div class="slots">
+    <div class="slot" id="slot1">
+      <div class="slot-title">Код 1</div>
+      <div class="slot-value empty" id="val1">Очаква се...</div>
+    </div>
+    <div class="slot" id="slot2">
+      <div class="slot-title">Код 2</div>
+      <div class="slot-value empty" id="val2">Очаква се...</div>
+    </div>
+  </div>
+  <div class="controls">
+    <button onclick="resetSlots()">↺ Нулирай кодовете</button>
+    <button class="primary" id="saveBtn" onclick="savePair()" disabled>+ Запиши двойката</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="records-header">
+    <h2>Записи</h2>
+    <span class="badge" id="countBadge">0</span>
+  </div>
+  <div id="tableWrap">
+    <div class="empty-state" id="emptyState">Няма записи все още</div>
+    <table id="recordsTable" style="display:none">
+      <thead>
+        <tr><th>#</th><th>Код 1</th><th>Код 2</th><th>Дата и час</th></tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="controls" style="margin-top:0.75rem">
+    <button onclick="downloadCSV()">⬇ Изтегли CSV</button>
+    <button class="danger" onclick="clearAll()">🗑 Изчисти всичко</button>
+  </div>
+</div>
+
+<script>
+let codeReader = null;
+let scanning = false;
+let slot1 = null, slot2 = null, currentSlot = 1;
+let records = [];
+
+function showStatus(msg, type) {
+  type = type || 'info';
+  var bar = document.getElementById('statusBar');
+  bar.textContent = msg;
+  bar.className = 'status-bar ' + type;
+  bar.style.display = 'block';
+  if (type === 'success') setTimeout(function(){ bar.style.display = 'none'; }, 3000);
+}
+
+async function startScanner() {
+  try {
+    showStatus('Зарежда камерата...', 'info');
+
+    // Първо искаме достъп до камерата, за да получим label на устройствата
+    await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function(s){ s.getTracks().forEach(function(t){ t.stop(); }); })
+      .catch(function(){});
+
+    var devices = await navigator.mediaDevices.enumerateDevices();
+    var videoDevices = devices.filter(function(d){ return d.kind === 'videoinput'; });
+
+    var sel = document.getElementById('camSelect');
+    sel.innerHTML = '';
+    videoDevices.forEach(function(d, i) {
+      var o = document.createElement('option');
+      o.value = d.deviceId;
+      o.text = d.label || ('Камера ' + (i + 1));
+      sel.appendChild(o);
+    });
+    if (videoDevices.length > 1) sel.style.display = 'block';
+
+    var backCam = videoDevices.find(function(d){ return /back|rear|environment/i.test(d.label); });
+    var deviceId = backCam ? backCam.deviceId : (videoDevices[0] ? videoDevices[0].deviceId : null);
+    if (deviceId) sel.value = deviceId;
+
+    await beginDecode(deviceId);
+
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+    document.getElementById('indicator').classList.add('active');
+    document.getElementById('slotLabel').textContent = 'Сканирай Код 1';
+    showStatus('Камерата е активна — насочи към баркод или QR код', 'info');
+  } catch(e) {
+    showStatus('Грешка: ' + e.message, 'error');
+  }
+}
+
+async function beginDecode(deviceId) {
+  if (codeReader) { codeReader.reset(); }
+  codeReader = new ZXing.BrowserMultiFormatReader();
+  scanning = true;
+
+  var constraints = deviceId
+    ? { video: { deviceId: { exact: deviceId } } }
+    : { video: { facingMode: 'environment' } };
+
+  await codeReader.decodeFromConstraints(constraints, 'video', handleResult);
+}
+
+function handleResult(result, err) {
+  if (!result || !scanning) return;
+  var text = result.getText();
+
+  if (currentSlot === 1 && !slot1) {
+    slot1 = text;
+    updateSlot(1, text);
+    currentSlot = 2;
+    document.getElementById('slotLabel').textContent = 'Сканирай Код 2';
+    showStatus('✓ Код 1 записан! Сканирай Код 2', 'success');
+    if (navigator.vibrate) navigator.vibrate(100);
+  } else if (currentSlot === 2 && !slot2 && text !== slot1) {
+    slot2 = text;
+    updateSlot(2, text);
+    document.getElementById('slotLabel').textContent = '✓ Готово!';
+    document.getElementById('saveBtn').disabled = false;
+    showStatus('✓ И двата кода са сканирани! Натисни "Запиши двойката"', 'success');
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+  }
+}
+
+function updateSlot(n, val) {
+  var el = document.getElementById('val' + n);
+  el.textContent = val;
+  el.classList.remove('empty');
+  document.getElementById('slot' + n).classList.add('filled');
+}
+
+function resetSlots() {
+  slot1 = null; slot2 = null; currentSlot = 1;
+  [1, 2].forEach(function(n) {
+    var el = document.getElementById('val' + n);
+    el.textContent = 'Очаква се...';
+    el.classList.add('empty');
+    document.getElementById('slot' + n).classList.remove('filled');
+  });
+  document.getElementById('saveBtn').disabled = true;
+  if (scanning) {
+    document.getElementById('slotLabel').textContent = 'Сканирай Код 1';
+    showStatus('Нулирано — насочи към Код 1', 'info');
+  }
+}
+
+function savePair() {
+  if (!slot1 || !slot2) return;
+  var now = new Date();
+  var ts = now.toLocaleDateString('bg-BG') + ' ' + now.toLocaleTimeString('bg-BG');
+  records.push({ n: records.length + 1, c1: slot1, c2: slot2, ts: ts });
+  updateTable();
+  resetSlots();
+  showStatus('Двойката е записана!', 'success');
+}
+
+function updateTable() {
+  var tbody = document.getElementById('tbody');
+  var badge = document.getElementById('countBadge');
+  var table = document.getElementById('recordsTable');
+  var empty = document.getElementById('emptyState');
+  badge.textContent = records.length;
+  if (!records.length) { table.style.display = 'none'; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  table.style.display = 'table';
+  tbody.innerHTML = records.slice().reverse().map(function(r) {
+    return '<tr><td>' + r.n + '</td><td>' + esc(r.c1) + '</td><td>' + esc(r.c2) + '</td><td>' + r.ts + '</td></tr>';
+  }).join('');
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function downloadCSV() {
+  if (!records.length) { showStatus('Няма записи за изтегляне', 'error'); return; }
+  var bom = '\uFEFF';
+  var header = '#,Код 1,Код 2,Дата и час\n';
+  var rows = records.map(function(r) {
+    return r.n + ',"' + r.c1.replace(/"/g,'""') + '","' + r.c2.replace(/"/g,'""') + '","' + r.ts + '"';
+  }).join('\n');
+  var blob = new Blob([bom + header + rows], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'баркодове_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+function clearAll() {
+  if (!records.length) return;
+  if (confirm('Изтрий всички ' + records.length + ' записа?')) {
+    records = [];
+    updateTable();
+    showStatus('Всички записи са изтрити', 'info');
+  }
+}
+
+function switchCamera() {
+  var id = document.getElementById('camSelect').value;
+  beginDecode(id);
+}
+
+function stopScanner() {
+  scanning = false;
+  if (codeReader) codeReader.reset();
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+  document.getElementById('indicator').classList.remove('active');
+  document.getElementById('slotLabel').textContent = 'Камерата е спряна';
+  showStatus('Камерата е спряна', 'info');
+}
+</script>
+</body>
+</html>
