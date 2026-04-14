@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ТУМГ / Пломба Скенер</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#f0f4f8;color:#222;min-height:100vh;padding:1rem}
+h1{font-size:18px;font-weight:600;margin-bottom:1rem;text-align:center;color:#1a3a5c}
+
+.card{background:#fff;border:1px solid #ddd;border-radius:12px;padding:1rem;margin-bottom:1rem}
+
+/* Камера */
+.scan-wrap{position:relative;width:100%;max-width:280px;margin:0 auto;border-radius:8px;overflow:hidden;background:#000}
+video{width:100%;display:block;max-height:200px;object-fit:cover}
+canvas#ov{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+.cam-lbl{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.65);color:#fff;font-size:13px;padding:5px 16px;border-radius:20px;white-space:nowrap;z-index:2;transition:background .3s}
+.cam-lbl.waiting{background:rgba(30,100,200,0.75)}
+.cam-lbl.ready{background:rgba(20,150,80,0.75)}
+.dot{position:absolute;top:10px;right:10px;width:12px;height:12px;border-radius:50%;background:#e24b4a;z-index:2}
+.dot.on{background:#4caf50;animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Бутони за сканиране */
+.scan-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:.75rem}
+.scan-btn{padding:14px 10px;border:2px solid #ccc;border-radius:10px;background:#f9f9f9;color:#888;font-size:15px;font-weight:600;cursor:not-allowed;text-align:center;transition:all .2s;position:relative;line-height:1.3}
+.scan-btn .sub{font-size:11px;font-weight:400;margin-top:3px;display:block}
+.scan-btn.active{background:#1a3a5c;border-color:#1a3a5c;color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(26,58,92,.25)}
+.scan-btn.active:hover{background:#0f2540}
+.scan-btn.done{background:#e8f5e9;border-color:#4caf50;color:#2e7d32;cursor:default}
+.scan-btn.done::after{content:'✓';position:absolute;top:8px;right:10px;font-size:16px;color:#4caf50}
+
+/* Статус */
+.sb{font-size:13px;padding:8px 12px;border-radius:8px;margin-top:.75rem;text-align:center;display:none}
+.sb.info{background:#e6f1fb;color:#185FA5;display:block}
+.sb.ok{background:#e8f5e9;color:#2e7d32;display:block}
+.sb.err{background:#ffebee;color:#c62828;display:block}
+
+/* Текуща двойка */
+.pair-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pair-slot{padding:.6rem .75rem;border:1px solid #ddd;border-radius:8px;background:#f9f9f9;min-height:56px}
+.pair-slot.ok{border-color:#4caf50;background:#f0fdf4}
+.ptitle{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.pval{font-size:13px;font-weight:600;word-break:break-all;color:#444}
+.pval.empty{color:#ccc;font-weight:400;font-style:italic;font-size:12px}
+
+/* Контроли */
+.controls{display:flex;gap:8px;margin-top:.75rem;flex-wrap:wrap}
+button{flex:1;min-width:100px;padding:10px 12px;border:1px solid #ccc;border-radius:8px;background:#fff;color:#222;font-size:14px;cursor:pointer;transition:background .15s}
+button:hover{background:#f0f0f0}
+button:active{transform:scale(.98)}
+button.green{background:#1D9E75;color:#fff;border-color:#1D9E75}
+button.green:hover{background:#0F6E56}
+button.blue{background:#1a3a5c;color:#fff;border-color:#1a3a5c}
+button.blue:hover{background:#0f2540}
+button.red-btn{background:#e24b4a;color:#fff;border-color:#e24b4a}
+button:disabled{opacity:.4;cursor:not-allowed}
+
+/* Таблица */
+.rhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem}
+.rhead h2{font-size:15px;font-weight:600}
+.badge{background:#e6f1fb;color:#185FA5;font-size:12px;padding:2px 10px;border-radius:20px}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:320px}
+th{text-align:left;padding:7px 8px;color:#666;border-bottom:1px solid #eee;font-weight:600;background:#fafafa}
+td{padding:7px 8px;border-bottom:1px solid #eee;word-break:break-all}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f9f9f9}
+.empty-msg{text-align:center;padding:2rem;color:#bbb;font-size:13px}
+select{width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#222;font-size:13px;margin-top:.75rem;display:none}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field-group{display:flex;flex-direction:column;gap:4px}
+.field-group label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.field-group input{padding:9px 10px;border:1px solid #ddd;border-radius:8px;font-size:14px;color:#222;background:#fff;outline:none;transition:border .2s;width:100%}
+.field-group input:focus{border-color:#1a3a5c}
+.field-group input.filled{border-color:#4caf50;background:#f0fdf4}
+.field-group input.inp-err{border-color:#e24b4a;background:#fff8f8}
+</style>
+</head>
+<body>
+
+<h1>🔍 ТУМГ / Пломба Скенер</h1>
+
+<!-- КАМЕРА -->
+<div class="card">
+  <div class="field-row" style="margin-bottom:.75rem">
+    <div class="field-group">
+      <label>👤 Потребител</label>
+      <input type="text" id="fUser" placeholder="Въведи име..." oninput="markField('fUser');checkFields()" autocomplete="off">
+    </div>
+    <div class="field-group">
+      <label>⚙️ № Хеш Екстрактор</label>
+      <input type="text" id="fExtractor" placeholder="Въведи номер..." oninput="markField('fExtractor');checkFields()" autocomplete="off">
+    </div>
+  </div>
+  <div class="scan-wrap" id="scanWrap">
+    <video id="video" playsinline muted></video>
+    <canvas id="ov"></canvas>
+    <div class="cam-lbl waiting" id="lbl">Натисни Старт</div>
+    <div class="dot" id="dot"></div>
+  </div>
+
+  <div class="sb info" id="sb">Попълни Потребител и № Хеш Екстрактор за да започнеш</div>
+
+  <div class="controls">
+    <button class="blue" id="btnStart" onclick="startCam()" disabled>▶ Старт</button>
+    <button id="btnStop" onclick="stopCam()" disabled>■ Спри</button>
+  </div>
+  <select id="camSel" onchange="switchCam()"></select>
+</div>
+
+<!-- БУТОНИ ЗА СКАНИРАНЕ -->
+<div class="card">
+  <div style="font-size:13px;color:#666;margin-bottom:.6rem">Ред на сканиране:</div>
+  <div class="scan-btns">
+    <div class="scan-btn" id="btnTumg" onclick="activateScan('tumg')">
+      📦 Сериен номер ТУМГ
+      <span class="sub" id="subTumg">изчаква се</span>
+    </div>
+    <div class="scan-btn" id="btnPlomba" onclick="activateScan('plomba')">
+      🔒 Пломба
+      <span class="sub" id="subPlomba">заключен</span>
+    </div>
+  </div>
+
+  <!-- Текуща двойка -->
+  <div class="pair-row" style="margin-top:.75rem">
+    <div class="pair-slot" id="ps1">
+      <div class="ptitle">Сериен номер ТУМГ</div>
+      <div class="pval empty" id="pv1">—</div>
+    </div>
+    <div class="pair-slot" id="ps2">
+      <div class="ptitle">Пломба</div>
+      <div class="pval empty" id="pv2">—</div>
+    </div>
+  </div>
+</div>
+
+<!-- ЗАПИСИ -->
+<div class="card">
+  <div class="rhead">
+    <h2>Записани двойки</h2>
+    <span class="badge" id="cnt">0</span>
+  </div>
+  <div class="tbl-wrap">
+    <div class="empty-msg" id="noRec">Няма записи все още</div>
+    <table id="tbl" style="display:none">
+      <thead><tr><th>#</th><th>Потребител</th><th>Хеш Екстрактор</th><th>Сер. № ТУМГ</th><th>Пломба</th><th>Дата / Час</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="controls" style="margin-top:.75rem">
+    <button onclick="dlCSV()">⬇ Изтегли CSV</button>
+    <button class="red-btn" onclick="clearAll()">🗑 Изчисти</button>
+  </div>
+</div>
+
+<script>
+var video   = document.getElementById('video');
+var ovCanvas= document.getElementById('ov');
+var octx    = ovCanvas.getContext('2d');
+var procC   = document.createElement('canvas');
+var pctx    = procC.getContext('2d');
+
+var useNative = false, useJsQR = false;
+var detector  = null;
+var scanning  = false, rafId = null;
+var records   = [];
+
+// Текущо сканиране
+var activeScan = null; // 'tumg' | 'plomba' | null
+var tumgVal    = null;
+var plombaVal  = null;
+var lastCode   = '', lastTime = 0;
+
+/* ── Инит детектор ── */
+function initDetector() {
+  if (window.BarcodeDetector) {
+    try {
+      detector = new BarcodeDetector({
+        formats:['qr_code','ean_13','ean_8','code_128','code_39','upc_a','upc_e','itf','codabar','data_matrix','aztec','pdf417']
+      });
+      useNative = true; return;
+    } catch(e){}
+  }
+  if (window.jsQR) useJsQR = true;
+}
+
+/* ── Статус бар ── */
+function sb(msg, type) {
+  var el = document.getElementById('sb');
+  el.textContent = msg;
+  el.className = 'sb ' + (type||'info');
+  if (type === 'ok') setTimeout(function(){ el.className='sb info'; el.textContent='Готов за следващо сканиране'; }, 2000);
+}
+
+/* ── Старт камера ── */
+async function startCam() {
+  initDetector();
+  if (!useNative && !useJsQR) {
+    sb('Браузърът не поддържа сканиране. Използвай Chrome (Android) или Safari 17+.','err'); return;
+  }
+  try {
+    sb('Зарежда камерата...','info');
+    await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}})
+      .then(function(s){ s.getTracks().forEach(function(t){t.stop();}); }).catch(function(){});
+
+    var all = await navigator.mediaDevices.enumerateDevices();
+    var vids = all.filter(function(d){ return d.kind==='videoinput'; });
+    var sel  = document.getElementById('camSel');
+    sel.innerHTML = '';
+    vids.forEach(function(d,i){
+      var o=document.createElement('option'); o.value=d.deviceId; o.text=d.label||'Камера '+(i+1); sel.appendChild(o);
+    });
+    if (vids.length>1) sel.style.display='block';
+    var back = vids.find(function(d){ return /back|rear|environment/i.test(d.label); });
+    var did  = back ? back.deviceId : (vids[0]?vids[0].deviceId:null);
+    if (did) sel.value=did;
+
+    await openStream(did);
+    document.getElementById('btnStart').disabled=true;
+    document.getElementById('btnStop').disabled=false;
+    document.getElementById('dot').classList.add('on');
+
+    // Активирай ТУМГ бутона
+    setPhase('tumg');
+    sb('Камерата е активна — натисни "Баркод ТУМГ" за да започнеш','info');
+  } catch(e) { sb('Грешка: '+e.message,'err'); }
+}
+
+async function openStream(deviceId) {
+  if (video.srcObject) video.srcObject.getTracks().forEach(function(t){t.stop();});
+  var c = deviceId
+    ? {video:{deviceId:{exact:deviceId},width:{ideal:1280},height:{ideal:720}}}
+    : {video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}};
+  var stream = await navigator.mediaDevices.getUserMedia(c);
+  video.srcObject = stream;
+  await new Promise(function(res){ video.onloadedmetadata=res; });
+  video.play(); scanning=true; scan();
+}
+
+/* ── Скенер loop ── */
+function scan() {
+  if (!scanning) return;
+  if (video.readyState < 2) { rafId=requestAnimationFrame(scan); return; }
+  var w=video.videoWidth, h=video.videoHeight;
+  if (!w||!h) { rafId=requestAnimationFrame(scan); return; }
+
+  procC.width=w; procC.height=h;
+  pctx.drawImage(video,0,0,w,h);
+
+  // Overlay рамка
+  ovCanvas.width=ovCanvas.offsetWidth||ovCanvas.clientWidth||320;
+  ovCanvas.height=ovCanvas.offsetHeight||ovCanvas.clientHeight||240;
+  octx.clearRect(0,0,ovCanvas.width,ovCanvas.height);
+  var cx=ovCanvas.width/2, cy=ovCanvas.height/2;
+  var bw=ovCanvas.width*.7, bh=ovCanvas.height*.55;
+  octx.strokeStyle = activeScan ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.3)';
+  octx.lineWidth=2;
+  octx.strokeRect(cx-bw/2,cy-bh/2,bw,bh);
+
+  if (!activeScan) { rafId=requestAnimationFrame(scan); return; } // пауза докато не е натиснат бутон
+
+  if (useNative) {
+    detector.detect(procC).then(function(res){
+      if (res&&res.length) onCode(res[0].rawValue);
+      rafId=requestAnimationFrame(scan);
+    }).catch(function(){ rafId=requestAnimationFrame(scan); });
+  } else if (useJsQR) {
+    var img=pctx.getImageData(0,0,w,h);
+    var code=jsQR(img.data,w,h,{inversionAttempts:'dontInvert'});
+    if (code) onCode(code.data);
+    rafId=requestAnimationFrame(scan);
+  }
+}
+
+/* ── Получен код ── */
+function onCode(text) {
+  if (!text||!activeScan) return;
+  var now=Date.now();
+  if (text===lastCode && (now-lastTime)<2000) return;
+  lastCode=text; lastTime=now;
+
+  // Зелена рамка
+  var cx=ovCanvas.width/2, cy=ovCanvas.height/2;
+  var bw=ovCanvas.width*.7, bh=ovCanvas.height*.55;
+  octx.strokeStyle='#4caf50'; octx.lineWidth=3;
+  octx.strokeRect(cx-bw/2,cy-bh/2,bw,bh);
+
+  if (activeScan==='tumg') {
+    tumgVal=text;
+    document.getElementById('pv1').textContent=text;
+    document.getElementById('pv1').classList.remove('empty');
+    document.getElementById('ps1').classList.add('ok');
+    document.getElementById('subTumg').textContent=shorten(text);
+    markDone('btnTumg');
+    vib(120);
+    sb('✓ Сериен номер ТУМГ сканиран! Натисни "Пломба"','ok');
+    setPhase('plomba');
+
+  } else if (activeScan==='plomba') {
+    plombaVal=text;
+    document.getElementById('pv2').textContent=text;
+    document.getElementById('pv2').classList.remove('empty');
+    document.getElementById('ps2').classList.add('ok');
+    document.getElementById('subPlomba').textContent=shorten(text);
+    markDone('btnPlomba');
+    vib([100,50,100]);
+    autoSave();
+  }
+}
+
+/* ── Автоматично записване ── */
+function autoSave() {
+  var now=new Date();
+  var ts=now.toLocaleDateString('bg-BG')+' '+now.toLocaleTimeString('bg-BG');
+  var user=document.getElementById('fUser').value.trim();
+  var extr=document.getElementById('fExtractor').value.trim();
+  records.push({n:records.length+1, user:user, extractor:extr, tumg:tumgVal, plomba:plombaVal, ts:ts});
+  updateTable();
+  sb('✓ Записано! Готов за следващата двойка...','ok');
+
+  // Пауза 1.5 сек, после нулиране за следващо сканиране
+  setTimeout(function(){
+    tumgVal=null; plombaVal=null; lastCode=''; activeScan=null;
+    resetDisplay();
+    setPhase('tumg');
+    sb('Готов — натисни "Баркод ТУМГ" за следваща двойка','info');
+  }, 1500);
+}
+
+/* ── Фази ── */
+function setPhase(phase) {
+  activeScan = null; // временно спираме сканирането
+  if (phase==='tumg') {
+    // ТУМГ активен, Пломба заключен
+    var bt=document.getElementById('btnTumg');
+    bt.className='scan-btn active';
+    document.getElementById('subTumg').textContent='натисни за сканиране';
+    var bp=document.getElementById('btnPlomba');
+    bp.className='scan-btn';
+    document.getElementById('subPlomba').textContent='заключен';
+    document.getElementById('lbl').textContent='Очаква Сериен № ТУМГ';
+    document.getElementById('lbl').className='cam-lbl waiting';
+  } else if (phase==='plomba') {
+    var bp2=document.getElementById('btnPlomba');
+    bp2.className='scan-btn active';
+    document.getElementById('subPlomba').textContent='натисни за сканиране';
+    document.getElementById('lbl').textContent='Очаква баркод Пломба';
+    document.getElementById('lbl').className='cam-lbl waiting';
+  }
+}
+
+function activateScan(type) {
+  if (!scanning) { sb('Първо стартирай камерата','err'); return; }
+  if (type==='tumg' && document.getElementById('btnTumg').classList.contains('active')) {
+    activeScan='tumg';
+    document.getElementById('lbl').textContent='🔍 Сканира Сер. № ТУМГ...';
+    document.getElementById('lbl').className='cam-lbl ready';
+    sb('Насочи камерата към серийния номер на ТУМГ','info');
+    lastCode='';
+  } else if (type==='plomba' && document.getElementById('btnPlomba').classList.contains('active')) {
+    activeScan='plomba';
+    document.getElementById('lbl').textContent='🔍 Сканира Пломба...';
+    document.getElementById('lbl').className='cam-lbl ready';
+    sb('Насочи камерата към баркода на Пломбата','info');
+    lastCode='';
+  }
+}
+
+function markDone(id) {
+  var el=document.getElementById(id);
+  el.className='scan-btn done';
+  activeScan=null;
+}
+
+function resetDisplay() {
+  ['pv1','pv2'].forEach(function(id,i){
+    var el=document.getElementById(id);
+    el.textContent='—'; el.classList.add('empty');
+    document.getElementById('ps'+(i+1)).classList.remove('ok');
+  });
+  document.getElementById('subTumg').textContent='изчаква се';
+  document.getElementById('subPlomba').textContent='заключен';
+}
+
+/* ── Таблица ── */
+function updateTable() {
+  document.getElementById('cnt').textContent=records.length;
+  var noRec=document.getElementById('noRec');
+  var tbl=document.getElementById('tbl');
+  if (!records.length){ tbl.style.display='none'; noRec.style.display='block'; return; }
+  noRec.style.display='none'; tbl.style.display='table';
+  document.getElementById('tbody').innerHTML=records.slice().reverse().map(function(r){
+    return '<tr><td>'+r.n+'</td><td>'+esc(r.user)+'</td><td>'+esc(r.extractor)+'</td><td>'+esc(r.tumg)+'</td><td>'+esc(r.plomba)+'</td><td>'+r.ts+'</td></tr>';
+  }).join('');
+}
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function shorten(s){ return s.length>14 ? s.slice(0,12)+'…' : s; }
+
+function dlCSV() {
+  if (!records.length){ sb('Няма записи','err'); return; }
+  var bom='\uFEFF', hdr='#,Потребител,Хеш Екстрактор,Сериен № ТУМГ,Пломба,Дата и час\n';
+  var rows=records.map(function(r){
+    return r.n+',"'+r.user.replace(/"/g,'""')+'","'+r.extractor.replace(/"/g,'""')+'","'+r.tumg.replace(/"/g,'""')+'","'+r.plomba.replace(/"/g,'""')+'","'+r.ts+'"';
+  }).join('\n');
+  var blob=new Blob([bom+hdr+rows],{type:'text/csv;charset=utf-8;'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='тумг_пломба_'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
+}
+
+function clearAll() {
+  if (!records.length) return;
+  if (confirm('Изтрий всички '+records.length+' записа?')){ records=[]; updateTable(); sb('Изтрито','info'); }
+}
+
+function switchCam() { openStream(document.getElementById('camSel').value); }
+
+function stopCam() {
+  scanning=false; activeScan=null;
+  if (rafId) cancelAnimationFrame(rafId);
+  if (video.srcObject) video.srcObject.getTracks().forEach(function(t){t.stop();});
+  document.getElementById('btnStart').disabled=false;
+  document.getElementById('btnStop').disabled=true;
+  document.getElementById('dot').classList.remove('on');
+  document.getElementById('lbl').textContent='Камерата е спряна';
+  document.getElementById('lbl').className='cam-lbl';
+  sb('Камерата е спряна','info');
+}
+
+function vib(p){ if(navigator.vibrate) navigator.vibrate(p); }
+
+function markField(id) {
+  var el = document.getElementById(id);
+  el.classList.remove('inp-err');
+  if (el.value.trim()) el.classList.add('filled');
+  else el.classList.remove('filled');
+}
+
+function checkFields() {
+  var user = document.getElementById('fUser').value.trim();
+  var extr = document.getElementById('fExtractor').value.trim();
+  var btn  = document.getElementById('btnStart');
+  if (user && extr) {
+    btn.disabled = false;
+    sb('Готово — натисни ▶ Старт за да включиш камерата', 'info');
+  } else {
+    btn.disabled = true;
+  }
+}
+</script>
+</body>
+</html>
